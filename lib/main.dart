@@ -4,6 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as path;
+import 'account_info.dart';
+
 
 void main() {
   runApp(MyApp());
@@ -16,10 +18,17 @@ class DatabaseHelper {
       path.join(dbPath, 'knowledge_database.db'),
       onCreate: (db, version) {
         return db.execute(
-          'CREATE TABLE knowledge(id TEXT PRIMARY KEY, title TEXT, content TEXT, category TEXT)',
+          'CREATE TABLE knowledge(id TEXT PRIMARY KEY, title TEXT, content TEXT)',
         );
       },
       version: 1,
+    );
+  }
+
+  static Future<void> createAccountTable() async {
+    final db = await DatabaseHelper.getDatabase();
+    await db.execute(
+      'CREATE TABLE IF NOT EXISTS account_info(username TEXT PRIMARY KEY, email TEXT, favorite_genre TEXT)',
     );
   }
 
@@ -41,7 +50,6 @@ class DatabaseHelper {
         id: maps[i]['id'],
         title: maps[i]['title'],
         content: maps[i]['content'],
-        category : maps[i]['category'],
       );
     });
   }
@@ -54,7 +62,41 @@ class DatabaseHelper {
       whereArgs: [id],
     );
   }
+
+  static Future<List<Knowledge>> getKnowledge() async {
+    final db = await DatabaseHelper.getDatabase();
+    final List<Map<String, dynamic>> maps = await db.query('knowledge');
+
+    return List.generate(maps.length, (i) {
+      return Knowledge(
+        id: maps[i]['id'],
+        title: maps[i]['title'],
+        content: maps[i]['content'],
+      );
+    });
+  }
+
+  static Future<void> insertAccountInfo(AccountInfo accountInfo) async {
+    final db = await DatabaseHelper.getDatabase();
+    await db.insert(
+      'account_info',
+      accountInfo.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  static Future<AccountInfo> getAccountInfo() async {
+    final db = await DatabaseHelper.getDatabase();
+    final List<Map<String, dynamic>> maps = await db.query('account_info');
+
+    if (maps.isNotEmpty) {
+      return AccountInfo.fromMap(maps.first);
+    } else {
+      return AccountInfo(username: '', email: '', favoriteGenre: '');
+    }
+  }
 }
+
 
 class MyApp extends StatefulWidget {
   @override
@@ -119,7 +161,6 @@ class _MainScreenState extends State<MainScreen> {
       HomeFeedPage(),
       SettingsPage(toggleTheme: widget.toggleTheme),
       FavoritesPage(), // Tambahkan FavoritesPage di sini
-      CategoryPage()
     ];
   }
 
@@ -138,26 +179,9 @@ class _MainScreenState extends State<MainScreen> {
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         items: [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home),
-            label: 'Feed',
-            backgroundColor: Colors.deepPurple, // Violet background color
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.settings),
-            label: 'Settings',
-            backgroundColor: Colors.deepPurple, // Violet background color
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.favorite),
-            label: 'Favorites',
-            backgroundColor: Colors.deepPurple, // Violet background color
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.category),
-            label: 'Category',
-            backgroundColor: Colors.deepPurple, // Violet background color
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Feed'),
+          BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Settings'),
+          BottomNavigationBarItem(icon: Icon(Icons.favorite), label: 'Favorites'),
         ],
         onTap: (index) {
           setState(() {
@@ -173,10 +197,53 @@ class _MainScreenState extends State<MainScreen> {
   }
 }
 
-class SettingsPage extends StatelessWidget {
+class SettingsPage extends StatefulWidget {
   final Function(bool) toggleTheme;
 
   SettingsPage({required this.toggleTheme});
+
+  @override
+  _SettingsPageState createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  // Controllers for form fields
+  final _usernameController = TextEditingController();
+  final _emailController = TextEditingController();
+  final _favoriteGenreController = TextEditingController();
+
+  Future<AccountInfo>? _accountInfoFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAccountInfo();
+    DatabaseHelper.createAccountTable(); // Create the account table if it doesn't exist
+  }
+
+  Future<void> _loadAccountInfo() async {
+    setState(() {
+      _accountInfoFuture = DatabaseHelper.getAccountInfo();
+    });
+  }
+
+  Future<void> _saveAccountInfo() async {
+    final username = _usernameController.text;
+    final email = _emailController.text;
+    final favoriteGenre = _favoriteGenreController.text;
+
+    await DatabaseHelper.insertAccountInfo(
+      AccountInfo(
+        username: username,
+        email: email,
+        favoriteGenre: favoriteGenre,
+      ),
+    );
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Account information saved')),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -190,10 +257,42 @@ class SettingsPage extends StatelessWidget {
             title: Text('Dark Mode'),
             value: Theme.of(context).brightness == Brightness.dark,
             onChanged: (bool value) {
-              toggleTheme(value);
+              widget.toggleTheme(value);
             },
           ),
-          // Add more settings here
+          FutureBuilder<AccountInfo>(
+            future: _accountInfoFuture,
+            builder: (context, snapshot) {
+              if (snapshot.hasData) {
+                final accountInfo = snapshot.data!;
+                _usernameController.text = accountInfo.username;
+                _emailController.text = accountInfo.email;
+                _favoriteGenreController.text = accountInfo.favoriteGenre;
+              }
+
+              return Column(
+                children: [
+                  TextFormField(
+                    controller: _usernameController,
+                    decoration: InputDecoration(labelText: 'Username'),
+                  ),
+                  TextFormField(
+                    controller: _emailController,
+                    decoration: InputDecoration(labelText: 'Email'),
+                  ),
+                  TextFormField(
+                    controller: _favoriteGenreController,
+                    decoration: InputDecoration(labelText: 'Favorite Genre'),
+                  ),
+                  ElevatedButton(
+                    onPressed: _saveAccountInfo,
+                    child: Text('Save Account Information'),
+                  ),
+                ],
+              );
+            },
+          ),
+          // Add more settings options as needed
         ],
       ),
     );
@@ -272,16 +371,14 @@ class Knowledge {
   final String id;
   final String title;
   final String content;
-  final String category;
 
-  Knowledge({required this.id, required this.title, required this.content, required this.category});
+  Knowledge({required this.id, required this.title, required this.content});
 
   Map<String, dynamic> toMap() {
     return {
       'id': id,
       'title': title,
       'content': content,
-      'category': category,
     };
   }
 
@@ -290,7 +387,6 @@ class Knowledge {
       id: json['id'],
       title: json['title'],
       content: json['content'],
-      category: json['category'],
     );
   }
 }
@@ -318,14 +414,6 @@ class KnowledgeCard extends StatelessWidget {
           children: <Widget>[
             Text(
               knowledge.title,
-              style: TextStyle(
-                fontSize: 20.0,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            SizedBox(height: 8.0),
-            Text(
-              knowledge.category,
               style: TextStyle(
                 fontSize: 20.0,
                 fontWeight: FontWeight.bold,
@@ -362,12 +450,10 @@ class _AddKnowledgePageState extends State<AddKnowledgePage> {
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
   final _contentController = TextEditingController();
-  final _categoryController = TextEditingController(); // Tambahkan controller untuk kategori
 
   Future<void> submitKnowledge() async {
     final String title = _titleController.text;
     final String content = _contentController.text;
-    final String category = _categoryController.text; // Dapatkan input kategori
     final String createdAt = DateTime.now().toIso8601String();
 
     var response = await http.post(
@@ -379,7 +465,6 @@ class _AddKnowledgePageState extends State<AddKnowledgePage> {
         'createdAt': createdAt,
         'title': title,
         'content': content,
-        'category': category, // Sertakan kategori dalam body
       }),
     );
 
@@ -430,14 +515,6 @@ class _AddKnowledgePageState extends State<AddKnowledgePage> {
                   return null;
                 },
               ),
-              TextFormField(controller: _categoryController,
-                decoration: InputDecoration(labelText: 'Category'),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter category';
-                  }
-                  return null;
-                },),
               ElevatedButton(
                 onPressed: () {
                   if (_formKey.currentState!.validate()) {
@@ -538,41 +615,6 @@ class _FavoritesPageState extends State<FavoritesPage> {
   }
 }
 
-class CategoryPage extends StatefulWidget {
-  @override
-  _CategoryPageState createState() => _CategoryPageState();
-}
-
-class _CategoryPageState extends State<CategoryPage> {
-  final List<String> categories = [
-    'Coding',
-    'Flutter',
-    'Crypto',
-    'Blokchain',
-    'Machine Learning',
-    'Deep Learning'
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Category'),
-      ),
-      body: ListView.builder(
-        itemCount: categories.length,
-        itemBuilder: (context, index) {
-          return ListTile(
-            title: Text(categories[index]),
-            onTap: () {
-              // Handle category tap
-            },
-          );
-        },
-      ),
-    );
-  }
-}
 
 
 class PlaceholderWidget extends StatelessWidget {
